@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: ["pg", "files-sdk", "@aws-sdk/client-s3"],
 };
 
 export default nextConfig;

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="48" viewBox="0 0 150 48">
+  <rect width="150" height="48" rx="8" fill="#FFC20E"/>
+  <circle cx="24" cy="24" r="12" fill="#1A1A1A"/>
+  <path d="M16 18c3-5 8-5 10 0M16 30c3 5 8 5 10 0" fill="none" stroke="#FFC20E" stroke-width="1.6" stroke-linecap="round"/>
+  <text x="42" y="30" fill="#1A1A1A" font-family="Arial, Helvetica, sans-serif" font-size="18" font-weight="700">Maybank</text>
+</svg>
