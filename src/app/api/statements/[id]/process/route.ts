@@ -22,17 +22,20 @@ export async function POST(
     return NextResponse.json({ error: "Pick a bank." }, { status: 400 });
   }
 
-  const statements = await query<{ object_key: string; filename: string }>(
-    `select object_key, filename from statements where id = $1`,
+  const statements = await query<{ object_key: string; filename: string; booked_at: Date | null }>(
+    `select object_key, filename, booked_at from statements where id = $1`,
     [id],
   );
   const statement = statements[0];
   if (!statement) {
     return NextResponse.json({ error: "That statement is no longer available." }, { status: 404 });
   }
+  if (statement.booked_at) {
+    return NextResponse.json({ error: "This statement is booked and can no longer be re-read." }, { status: 409 });
+  }
 
   await query(
-    `update statements set status = 'processing', bank = coalesce($1, bank) where id = $2`,
+    `update statements set status = 'processing', bank = coalesce($1, bank) where id = $2 and booked_at is null`,
     [bank?.id ?? null, id],
   );
 

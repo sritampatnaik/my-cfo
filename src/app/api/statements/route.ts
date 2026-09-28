@@ -15,8 +15,9 @@ export async function GET() {
     period_year: number | null;
     period_month: number | null;
     uploaded_at: Date;
+    booked_at: Date | null;
   }>(
-    `select id, filename, bank, status, period_year, period_month, uploaded_at
+    `select id, filename, bank, status, period_year, period_month, uploaded_at, booked_at
      from statements
      order by uploaded_at desc`,
   );
@@ -30,6 +31,7 @@ export async function GET() {
       periodYear: row.period_year,
       periodMonth: row.period_month,
       uploadedAt: row.uploaded_at instanceof Date ? row.uploaded_at.toISOString() : String(row.uploaded_at),
+      bookedAt: row.booked_at instanceof Date ? row.booked_at.toISOString() : row.booked_at,
     })),
   });
 }

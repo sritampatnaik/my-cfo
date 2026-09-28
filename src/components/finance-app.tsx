@@ -1,16 +1,33 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { format } from "date-fns";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { LockIcon } from "@hugeicons/core-free-icons";
 import { BANKS, findBank } from "@/lib/banks";
 import type { Summary, TransactionRow } from "@/lib/finance";
 import { BankLogo } from "@/components/bank-logo";
 import { KindPill } from "@/components/kind-pill";
-import { StatementTable, TransactionTableView, type StatementRow } from "@/components/finance-tables";
+import {
+  BookingBadge,
+  StatementTable,
+  TransactionTableView,
+  type StatementRow,
+} from "@/components/finance-tables";
 import { DateField, MonthField } from "@/components/date-field";
 import { TypeChart } from "@/components/type-chart";
 import { UploadDialog } from "@/components/upload-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 type FinancePayload = {
   from: string;
@@ -193,11 +210,20 @@ function Dashboard({
         </label>
       </div>
       {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {!loading && summary && summary.drafts > 0 ? (
+        <p className="rounded-lg border border-dashed px-4 py-3 text-sm text-muted-foreground">
+          {summary.drafts} draft {summary.drafts === 1 ? "transaction isn't" : "transactions aren't"} included
+          below until {summary.drafts === 1 ? "it's" : "they're"} booked.{" "}
+          <Link href="/upload" className="font-medium text-foreground underline underline-offset-3">
+            Review and book statements
+          </Link>
+        </p>
+      ) : null}
       <div className="grid gap-3 sm:grid-cols-4">
         <Stat label="Inflows" value={loading ? "…" : formatMoney(summary?.inflows ?? 0)} />
         <Stat label="Outflows" value={loading ? "…" : formatMoney(summary?.outflows ?? 0)} />
         <Stat label="Net" value={loading ? "…" : formatMoney(summary?.net ?? 0)} />
-        <Stat label="Transactions" value={loading ? "…" : String(summary?.count ?? 0)} />
+        <Stat label="Booked transactions" value={loading ? "…" : String(summary?.count ?? 0)} />
       </div>
       <div className="rounded-lg border">
         <div className="border-b px-4 py-3 text-sm font-medium">By month</div>
@@ -256,6 +282,7 @@ type StatementRecord = {
   periodYear: number | null;
   periodMonth: number | null;
   uploadedAt: string;
+  bookedAt: string | null;
 };
 
 const MONTHS = [
@@ -269,6 +296,7 @@ const STATUS_LABEL: Record<string, string> = {
   detected: "Detected",
   extracted: "Extracted",
   ready: "Categorised",
+  booked: "Booked",
   error: "Error",
 };
 
@@ -294,8 +322,13 @@ function UploadTab() {
   const [error, setError] = useState("");
   const [history, setHistory] = useState<StatementRecord[]>([]);
   const selected = findBank(bankId);
+  const [confirmBook, setConfirmBook] = useState(false);
+  const [booking, setBooking] = useState(false);
+  const [savingId, setSavingId] = useState<string | null>(null);
   const openStatement = history.find((row) => row.id === openId);
   const reading = Boolean(openId && processing.includes(openId));
+  const booked = Boolean(openStatement?.bookedAt);
+  const unclassified = rows.filter((row) => row.status === "draft" && !row.kind).length;
 
   useEffect(() => {
     void loadHistory();
@@ -461,6 +494,43 @@ function UploadTab() {
     await loadHistory();
   }
 
+  async function book() {
+    if (!openId) return;
+    setBooking(true);
+    setError("");
+    setMessage("");
+    const response = await fetch(`/api/statements/${openId}/book`, { method: "POST" });
+    const body = (await response.json()) as { count?: number; error?: string };
+    setBooking(false);
+    setConfirmBook(false);
+    if (!response.ok) {
+      setError(body.error || "Could not book this statement.");
+      return;
+    }
+    setMessage(`Booked ${body.count} transactions.`);
+    await Promise.all([loadRows(openId), loadHistory()]);
+  }
+
+  async function reclassify(id: string, kind: string) {
+    if (!openId) return;
+    setError("");
+    setMessage("");
+    setSavingId(id);
+    const response = await fetch(`/api/transactions/${id}/reclassify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind }),
+    });
+    const body = (await response.json()) as { error?: string };
+    setSavingId(null);
+    if (!response.ok) {
+      setError(body.error || "Could not reclassify that transaction.");
+      return;
+    }
+    setMessage(`Posted a correction to ${kind}.`);
+    await loadRows(openId);
+  }
+
   const historyRows: StatementRow[] = history.map((row) => ({
     id: row.id,
     filename: row.filename,
@@ -486,20 +556,63 @@ function UploadTab() {
               <Button variant="outline" size="sm" onClick={closeDocument}>
                 Back
               </Button>
-              <h2 className="text-lg font-medium">{openStatement?.filename ?? "Statement"}</h2>
+              <h2 className="flex items-center gap-2 text-lg font-medium">
+                {openStatement?.filename ?? "Statement"}
+                {openStatement ? <BookingBadge status={booked ? "booked" : "draft"} /> : null}
+              </h2>
             </div>
-            <Button disabled={busy || reading || rows.length === 0} onClick={() => void categorise()}>
-              {busy ? "Categorising…" : "Categorise"}
-            </Button>
+            {booked ? null : (
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    disabled={busy || reading || rows.length === 0}
+                    onClick={() => void categorise()}
+                  >
+                    {busy ? "Categorising…" : "Categorise"}
+                  </Button>
+                  <Button
+                    disabled={busy || reading || booking || rows.length === 0 || unclassified > 0}
+                    onClick={() => setConfirmBook(true)}
+                  >
+                    Book statement
+                  </Button>
+                </div>
+                {!reading && rows.length > 0 && unclassified > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    {unclassified} {unclassified === 1 ? "transaction needs" : "transactions need"} a type before booking.
+                  </p>
+                ) : null}
+              </div>
+            )}
           </div>
+          {booked && openStatement?.bookedAt ? (
+            <div className="flex items-start gap-3 rounded-lg border bg-muted/40 px-4 py-3 text-sm">
+              <HugeiconsIcon icon={LockIcon} size={16} strokeWidth={1.75} color="currentColor" className="mt-0.5 shrink-0" />
+              <p>
+                Booked on {format(new Date(openStatement.bookedAt), "d MMM yyyy, h:mm a")}. These transactions are
+                locked. To fix a type, pick a new one and a reversing entry plus a corrected entry will be posted,
+                so the original stays on record.
+              </p>
+            </div>
+          ) : null}
           {message ? <p className="text-sm">{message}</p> : null}
+          <BookDialog
+            open={confirmBook}
+            onOpenChange={setConfirmBook}
+            rows={rows}
+            filename={openStatement?.filename ?? "this statement"}
+            busy={booking}
+            onConfirm={() => void book()}
+          />
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
             {BANKS.map((bank) => (
               <button
                 key={bank.id}
                 type="button"
+                disabled={booked}
                 onClick={() => void saveBank(bank.id)}
-                className={`flex items-center gap-3 rounded-lg border bg-white p-3 text-left ${bankId === bank.id ? "border-foreground" : "border-border"}`}
+                className={`flex items-center gap-3 rounded-lg border bg-white p-3 text-left disabled:cursor-not-allowed disabled:opacity-60 ${bankId === bank.id ? "border-foreground" : "border-border"}`}
               >
                 <BankLogo bank={bank} />
                 <span className="text-sm font-medium">{bank.name}</span>
@@ -517,16 +630,23 @@ function UploadTab() {
             <MonthField
               label="Statement month"
               value={period}
-              disabled={reading && !period}
+              disabled={booked || (reading && !period)}
               onChange={(value) => void savePeriod(value)}
             />
           </label>
           <p className="text-sm text-muted-foreground">
             {reading
               ? "Reading the statement…"
-              : `${rows.length} transactions extracted.`}
+              : booked
+                ? `${rows.filter((row) => row.entryType === "original").length} transactions booked.`
+                : `${rows.length} transactions extracted. Review them, then book the statement.`}
           </p>
-          <StatementRows rows={rows} onKindChange={(id, kind) => void changeKind(id, kind)} />
+          <StatementRows
+            rows={rows}
+            savingId={savingId}
+            onKindChange={(id, kind) => void changeKind(id, kind)}
+            onReclassify={(id, kind) => void reclassify(id, kind)}
+          />
         </div>
       ) : (
         <div className="space-y-5">
@@ -543,17 +663,77 @@ function UploadTab() {
 
 function StatementRows({
   rows,
+  savingId,
   onKindChange,
+  onReclassify,
 }: {
   rows: TransactionRow[];
+  savingId: string | null;
   onKindChange: (id: string, kind: string) => void;
+  onReclassify: (id: string, kind: string) => void;
 }) {
   return (
     <TransactionTableView
       rows={rows}
+      savingId={savingId}
       empty="No transactions were found in that statement."
       onKindChange={onKindChange}
+      onReclassify={onReclassify}
     />
+  );
+}
+
+function BookDialog({
+  open,
+  onOpenChange,
+  rows,
+  filename,
+  busy,
+  onConfirm,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  rows: TransactionRow[];
+  filename: string;
+  busy: boolean;
+  onConfirm: () => void;
+}) {
+  const inflows = rows.reduce((sum, row) => (row.amount > 0 ? sum + row.amount : sum), 0);
+  const outflows = rows.reduce((sum, row) => (row.amount < 0 ? sum + row.amount : sum), 0);
+  return (
+    <Dialog open={open} onOpenChange={busy ? undefined : onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Book {rows.length} transactions?</DialogTitle>
+          <DialogDescription>
+            Booking {filename} posts these transactions to your books and locks them. After this, types can
+            only be corrected with a reversing entry, and the bank and month can&apos;t be changed.
+          </DialogDescription>
+        </DialogHeader>
+        <dl className="grid grid-cols-3 gap-3 rounded-lg border px-3 py-2">
+          <div>
+            <dt className="text-xs text-muted-foreground">Inflows</dt>
+            <dd className="font-mono tabular-nums">{formatMoney(inflows)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Outflows</dt>
+            <dd className="font-mono tabular-nums">{formatMoney(outflows)}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Net</dt>
+            <dd className="font-mono tabular-nums">{formatMoney(inflows + outflows)}</dd>
+          </div>
+        </dl>
+        <DialogFooter>
+          <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+            Keep reviewing
+          </Button>
+          <Button disabled={busy} onClick={onConfirm}>
+            {busy ? "Booking…" : "Book statement"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -599,6 +779,25 @@ function TransactionTable({
       onKindChange(id, previous);
       setKindError(body.error || "Could not update that type.");
     }
+  }
+
+  async function reclassify(id: string, kind: string) {
+    setKindError("");
+    setMessage("");
+    setSavingId(id);
+    const response = await fetch(`/api/transactions/${id}/reclassify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind }),
+    });
+    const body = (await response.json()) as { error?: string };
+    setSavingId(null);
+    if (!response.ok) {
+      setKindError(body.error || "Could not reclassify that transaction.");
+      return;
+    }
+    setMessage(`Posted a correction to ${kind}.`);
+    onRefresh();
   }
 
   async function categorise() {
@@ -654,7 +853,12 @@ function TransactionTable({
           Loading transactions…
         </p>
       ) : (
-        <TransactionTableView rows={rows} savingId={savingId} onKindChange={(id, kind) => void changeKind(id, kind)} />
+        <TransactionTableView
+          rows={rows}
+          savingId={savingId}
+          onKindChange={(id, kind) => void changeKind(id, kind)}
+          onReclassify={(id, kind) => void reclassify(id, kind)}
+        />
       )}
     </section>
   );

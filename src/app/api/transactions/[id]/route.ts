@@ -20,10 +20,19 @@ export async function PATCH(
   }
 
   const updated = await query<{ id: string }>(
-    `update transactions set kind = $1, jev_confidence = null where id = $2 returning id`,
+    `update transactions set kind = $1, jev_confidence = null
+     where id = $2 and status = 'draft'
+     returning id`,
     [kind, id],
   );
   if (!updated[0]) {
+    const existing = await query<{ status: string }>(`select status from transactions where id = $1`, [id]);
+    if (existing[0]?.status === "booked") {
+      return NextResponse.json(
+        { error: "This transaction is booked. Reclassify it to post a correcting entry." },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: "That transaction is no longer available." }, { status: 404 });
   }
   return NextResponse.json({ id, kind });
