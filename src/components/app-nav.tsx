@@ -7,6 +7,7 @@ const links = [
   { href: "/", label: "Dashboard" },
   { href: "/upload", label: "Upload statements" },
   { href: "/transactions", label: "Transactions" },
+  { href: "/chat", label: "Ask CFO" },
 ];
 
 export function AppNav() {
@@ -23,8 +24,8 @@ export function AppNav() {
       </p>
       <nav className="mt-6 flex flex-col gap-1">
         {links.map((link) => {
-          const active = pathname === link.href;
-          const href = link.href === "/upload" ? link.href : `${link.href}${range}`;
+          const active = link.href === "/chat" ? pathname.startsWith("/chat") : pathname === link.href;
+          const href = link.href === "/upload" || link.href === "/chat" ? link.href : `${link.href}${range}`;
           return (
             <Link
               key={link.href}
