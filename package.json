@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@glideapps/glide-data-grid": "^6.0.4-alpha24",
+    "@neon/config": "^1.8.2",
+    "@neon/env": "^1.4.7",
     "class-variance-authority": "^0.7.1",
     "cn": "^0.4.0",
     "lodash": "^4.18.1",
