@@ -38,6 +38,11 @@ export function asDate(value: unknown) {
   return String(value).slice(0, 10);
 }
 
+// A reversal carries the opposite sign of the entry it cancels, so it must be bucketed by the original's
+// direction for inflow/outflow totals to net out.
+const ORIGINAL_SIGN = `case when entry_type = 'reversal' then -amount else amount end`;
+const NET_ENTRIES = `(count(*) filter (where entry_type <> 'reversal') - count(*) filter (where entry_type = 'reversal'))`;
+
 export async function getSummary(from: string, to: string): Promise<Summary> {
   const [totals] = await query<{
     inflows: string;
@@ -47,8 +52,8 @@ export async function getSummary(from: string, to: string): Promise<Summary> {
     drafts: string;
   }>(
     `select
-       coalesce(sum(amount) filter (where status = 'booked' and amount > 0), 0) as inflows,
-       coalesce(sum(amount) filter (where status = 'booked' and amount < 0), 0) as outflows,
+       coalesce(sum(amount) filter (where status = 'booked' and ${ORIGINAL_SIGN} > 0), 0) as inflows,
+       coalesce(sum(amount) filter (where status = 'booked' and ${ORIGINAL_SIGN} < 0), 0) as outflows,
        coalesce(sum(amount) filter (where status = 'booked'), 0) as net,
        count(*) filter (where status = 'booked' and entry_type = 'original') as count,
        count(*) filter (where status = 'draft') as drafts
@@ -58,12 +63,12 @@ export async function getSummary(from: string, to: string): Promise<Summary> {
   );
   const kinds = await query<{ kind: string | null; count: string; total: string }>(
     `select coalesce(kind, 'Unclassified') as kind,
-            count(*) filter (where entry_type <> 'reversal') - count(*) filter (where entry_type = 'reversal') as count,
+            ${NET_ENTRIES} as count,
             coalesce(sum(amount), 0) as total
      from transactions
      where posted_on >= $1 and posted_on <= $2 and status = 'booked'
      group by 1
-     having count(*) filter (where entry_type <> 'reversal') > count(*) filter (where entry_type = 'reversal')
+     having ${NET_ENTRIES} > 0
      order by abs(sum(amount)) desc`,
     [from, to],
   );
@@ -75,6 +80,7 @@ export async function getSummary(from: string, to: string): Promise<Summary> {
      from transactions
      where posted_on >= $1 and posted_on <= $2 and status = 'booked'
      group by 1, 2
+     having ${NET_ENTRIES} > 0
      order by 1, 2`,
     [from, to],
   );
@@ -116,14 +122,26 @@ type Row = {
   reversed: boolean;
 };
 
-const SELECT_ROWS = `select t.id, t.posted_on, t.description, t.amount, t.currency, t.kind, t.jev_confidence,
-         t.status, t.entry_type, t.adjusts_id,
-         exists (select 1 from transactions r where r.adjusts_id = t.id and r.entry_type = 'reversal') as reversed,
-         s.bank, s.filename
-  from transactions t
-  join statements s on s.id = t.statement_id`;
-
-const ORDER_ROWS = `order by t.posted_on desc, coalesce(t.adjusts_id, t.id), t.created_at`;
+// Corrections copy their root entry's statement and date, so filtering on either keeps whole chains
+// together and each chain can be listed directly under the entry it corrects.
+function selectRows(where: string) {
+  return `with recursive base as (
+      select * from transactions where ${where}
+    ), chain as (
+      select id, id as root_id from base where adjusts_id is null
+      union all
+      select b.id, c.root_id from base b join chain c on b.adjusts_id = c.id
+    )
+    select t.id, t.posted_on, t.description, t.amount, t.currency, t.kind, t.jev_confidence,
+           t.status, t.entry_type, t.adjusts_id,
+           exists (select 1 from base r where r.adjusts_id = t.id and r.entry_type = 'reversal') as reversed,
+           s.bank, s.filename
+    from base t
+    join chain c on c.id = t.id
+    join statements s on s.id = t.statement_id
+    order by t.posted_on desc, c.root_id, t.created_at,
+             case t.entry_type when 'original' then 0 when 'reversal' then 1 else 2 end`;
+}
 
 function toRow(row: Row): TransactionRow {
   return {
@@ -144,21 +162,11 @@ function toRow(row: Row): TransactionRow {
 }
 
 export async function listTransactions(from: string, to: string): Promise<TransactionRow[]> {
-  const rows = await query<Row>(
-    `${SELECT_ROWS}
-     where t.posted_on >= $1 and t.posted_on <= $2
-     ${ORDER_ROWS}`,
-    [from, to],
-  );
+  const rows = await query<Row>(selectRows(`posted_on >= $1 and posted_on <= $2`), [from, to]);
   return rows.map(toRow);
 }
 
 export async function listStatementTransactions(statementId: string): Promise<TransactionRow[]> {
-  const rows = await query<Row>(
-    `${SELECT_ROWS}
-     where t.statement_id = $1
-     ${ORDER_ROWS}`,
-    [statementId],
-  );
+  const rows = await query<Row>(selectRows(`statement_id = $1`), [statementId]);
   return rows.map(toRow);
 }
