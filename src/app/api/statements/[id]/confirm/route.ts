@@ -24,8 +24,19 @@ export async function POST(
     return NextResponse.json({ error: "Pick a bank." }, { status: 400 });
   }
 
+  const existing = await query<{ booked_at: Date | null }>(
+    `select booked_at from statements where id = $1`,
+    [id],
+  );
+  if (!existing[0]) {
+    return NextResponse.json({ error: "That statement is no longer available." }, { status: 404 });
+  }
+  if (existing[0].booked_at) {
+    return NextResponse.json({ error: "This statement is booked and can no longer be changed." }, { status: 409 });
+  }
+
   if (bank) {
-    await query(`update statements set bank = $1 where id = $2`, [bank.id, id]);
+    await query(`update statements set bank = $1 where id = $2 and booked_at is null`, [bank.id, id]);
   }
   if (hasPeriod) {
     await query(
@@ -33,13 +44,9 @@ export async function POST(
        set period_year = $1,
            period_month = $2,
            status = case when status = 'ready' then status else 'extracted' end
-       where id = $3`,
+       where id = $3 and booked_at is null`,
       [year, month, id],
     );
-  }
-  const updated = await query<{ id: string }>(`select id from statements where id = $1`, [id]);
-  if (!updated[0]) {
-    return NextResponse.json({ error: "That statement is no longer available." }, { status: 404 });
   }
   return NextResponse.json({ id, year, month });
 }

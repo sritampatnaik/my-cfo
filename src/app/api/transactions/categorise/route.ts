@@ -26,11 +26,11 @@ export async function POST(request: Request) {
     scoped
       ? `select id, description, amount, currency, posted_on
          from transactions
-         where statement_id = $1 and kind is null
+         where statement_id = $1 and kind is null and status = 'draft'
          order by posted_on`
       : `select id, description, amount, currency, posted_on
          from transactions
-         where posted_on >= $1 and posted_on <= $2 and kind is null
+         where posted_on >= $1 and posted_on <= $2 and kind is null and status = 'draft'
          order by posted_on`,
     scoped ? [statementId] : [from, to],
   );
@@ -47,13 +47,13 @@ export async function POST(request: Request) {
 
   for (const item of classified) {
     await query(
-      `update transactions set kind = $1, jev_confidence = $2 where id = $3`,
+      `update transactions set kind = $1, jev_confidence = $2 where id = $3 and status = 'draft'`,
       [item.kind, item.confidence, item.id],
     );
   }
 
   if (scoped && classified.length > 0) {
-    await query(`update statements set status = 'ready' where id = $1`, [statementId]);
+    await query(`update statements set status = 'ready' where id = $1 and booked_at is null`, [statementId]);
   }
 
   return NextResponse.json({ count: classified.length });

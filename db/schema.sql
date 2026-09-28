@@ -26,3 +26,40 @@ create table if not exists transactions (
 
 create index if not exists transactions_posted_on_idx on transactions (posted_on);
 create index if not exists transactions_statement_id_idx on transactions (statement_id);
+
+alter table statements add column if not exists booked_at timestamptz;
+
+alter table transactions add column if not exists status text not null default 'draft';
+alter table transactions add column if not exists booked_at timestamptz;
+alter table transactions add column if not exists entry_type text not null default 'original';
+alter table transactions add column if not exists adjusts_id uuid references transactions (id);
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'transactions_status_check') then
+    alter table transactions add constraint transactions_status_check
+      check (status in ('draft', 'booked'));
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'transactions_entry_type_check') then
+    alter table transactions add constraint transactions_entry_type_check
+      check (entry_type in ('original', 'reversal', 'adjustment'));
+  end if;
+end $$;
+
+create index if not exists transactions_adjusts_id_idx on transactions (adjusts_id);
+
+-- Booked entries are immutable: corrections must be posted as new reversal/adjustment rows.
+create or replace function prevent_booked_transaction_change() returns trigger as $$
+begin
+  if old.status = 'booked' then
+    raise exception 'Booked transactions cannot be changed or deleted'
+      using errcode = 'check_violation';
+  end if;
+  return case when tg_op = 'DELETE' then old else new end;
+end;
+$$ language plpgsql;
+
+drop trigger if exists transactions_booked_immutable on transactions;
+create trigger transactions_booked_immutable
+  before update or delete on transactions
+  for each row execute function prevent_booked_transaction_change();

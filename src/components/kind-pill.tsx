@@ -6,6 +6,8 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -101,27 +103,41 @@ export function KindPill({ kind }: { kind: string }) {
 export function KindPicker({
   kind,
   disabled = false,
+  mode = "edit",
   onChange,
 }: {
   kind: string | null;
   disabled?: boolean;
+  mode?: "edit" | "reclassify";
   onChange: (kind: string) => void;
 }) {
   const label = kind || "Unclassified";
+  const reclassify = mode === "reclassify";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild disabled={disabled}>
         <button
           type="button"
           disabled={disabled}
-          aria-label={`Change type, currently ${label}`}
+          aria-label={reclassify ? `Reclassify, currently ${label}` : `Change type, currently ${label}`}
           className="cursor-pointer rounded-full outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-wait disabled:opacity-60"
         >
           <KindPill kind={label} />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="min-w-44">
-        {TRANSACTION_KINDS.map((option) => (
+        {reclassify ? (
+          <>
+            <DropdownMenuLabel className="max-w-56 whitespace-normal">
+              <span className="block text-foreground">Reclassify as…</span>
+              <span className="block font-normal">
+                Booked entries stay as-is. This posts a reversing entry and a new one.
+              </span>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+          </>
+        ) : null}
+        {TRANSACTION_KINDS.filter((option) => !reclassify || option !== kind).map((option) => (
           <DropdownMenuItem
             key={option}
             onSelect={() => onChange(option)}
